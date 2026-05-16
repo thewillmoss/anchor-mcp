@@ -1,0 +1,50 @@
+{
+  "name": "anchor-mcp",
+  "version": "0.1.0",
+  "description": "Portable agent working state MCP server — tasks, plans, notepads, memory, and rules for any AI coding agent",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thewillmoss/anchor-mcp.git"
+  },
+  "bin": {
+    "anchor-mcp": "dist/stdio.cjs"
+  },
+  "files": [
+    "dist/"
+  ],
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/stdio.cjs --banner:js='#!/usr/bin/env node' && chmod +x dist/stdio.cjs",
+    "dev": "tsx src/index.ts",
+    "prepare": "npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "inspector": "npx @modelcontextprotocol/inspector dist/stdio.cjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.8.0",
+    "vitest": "^4.0.0",
+    "@types/node": "^20.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "ai",
+    "agent",
+    "coding",
+    "state",
+    "tasks",
+    "memory",
+    "plans"
+  ]
+}
