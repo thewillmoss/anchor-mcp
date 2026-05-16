@@ -46,15 +46,18 @@ Add to `.claude/.mcp.json`:
 }
 ```
 
-### Configure (OpenCode / oh-my-openagent)
+### Configure (OpenCode)
 
-Add to `.opencode/oh-my-openagent.json`:
+Add to `~/.config/opencode/opencode.json`:
 
 ```json
 {
-  "mcpServers": {
+  "mcp": {
     "anchor": {
-      "command": "anchor-mcp"
+      "type": "local",
+      "command": ["anchor-mcp"],
+      "enabled": true,
+      "environment": {}
     }
   }
 }
@@ -69,25 +72,52 @@ Add to `.codex/config.toml`:
 command = "anchor-mcp"
 ```
 
+### Configure (Cursor / Windsurf)
+
+Add to your MCP server settings:
+
+```json
+{
+  "anchor": {
+    "command": "anchor-mcp"
+  }
+}
+```
+
 ## Tools
 
-| Tool | Description |
-|------|-------------|
-| `get-active-task` | Get the current active task for this worktree |
-| `set-active-task` | Set or update the active task |
-| `complete-task` | Mark the active task as completed |
-| `list-tasks` | List all tasks with optional status filter |
-| `get-plan` | Read a plan by name |
-| `save-plan` | Create or update a plan |
-| `list-plans` | List all plan names |
-| `get-notepad` | Read a notepad by topic |
-| `append-notepad` | Append content to a notepad |
-| `list-notepads` | List all notepad topics |
-| `add-memory` | Store a learning, decision, or pattern |
-| `list-memory` | Retrieve stored memory entries |
-| `get-rules` | Read project agent rules |
-| `save-rules` | Update project agent rules |
-| `promote-learning` | Promote a learning to a project rule |
+Anchor provides 6 grouped tools. Each tool accepts an `action` parameter:
+
+| Tool | Actions | Description |
+|------|---------|-------------|
+| `task_manager` | `get_active`, `set_active`, `complete`, `list` | Manage the active task and task list |
+| `plan_manager` | `get`, `save`, `list` | Manage execution plans with issues and learnings |
+| `notepad_manager` | `get`, `save`, `list` | Manage freeform scratch notes by topic |
+| `memory_manager` | `add`, `search`, `list` | Store and retrieve learnings, decisions, patterns |
+| `rules_manager` | `get`, `save` | Manage project-specific agent instructions |
+| `promote_learning` | _(single action)_ | Promote plan learnings into project rules |
+
+### Usage examples
+
+**Set an active task:**
+```
+task_manager(action="set_active", description="Implement user authentication")
+```
+
+**Save a plan:**
+```
+plan_manager(action="save", name="auth-flow", content="# Auth Flow Plan\n\n1. Add login endpoint\n2. Add JWT middleware")
+```
+
+**Add a memory:**
+```
+memory_manager(action="add", content="Always use httpOnly cookies for JWT", tags=["auth", "security"])
+```
+
+**Search memories:**
+```
+memory_manager(action="search", query="authentication")
+```
 
 ## State directory
 
