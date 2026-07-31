@@ -7,6 +7,8 @@ persistent working state for AI coding agents — tasks, plans, scratch notes,
 learnings, and project rules. It works with Claude Code, OpenCode, Codex CLI,
 Cursor, Windsurf, or any MCP-compatible agent.
 
+![Anchor: one agent writes the task, a separate process reads it back](demo/anchor.gif)
+
 > **Status: early, and in daily use.** I run Anchor across Claude Code, Codex CLI,
 > and OpenCode every day; it is the reason it exists. The surface is small and
 > stable — 6 grouped tools, atomic writes, 22 tests. Expect the tool schemas to
