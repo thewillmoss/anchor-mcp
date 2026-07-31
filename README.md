@@ -34,8 +34,17 @@ Per git worktree, Anchor manages:
 ### Install
 
 ```bash
-npm install -g anchor-mcp
+npm install -g @thewillmoss/anchor-mcp
 ```
+
+Or run it without installing — every config below works with `npx` too:
+
+```bash
+npx -y @thewillmoss/anchor-mcp
+```
+
+> The unscoped `anchor-mcp` name on npm belongs to an unrelated Solana project.
+> This package is scoped; the binary it installs is still called `anchor-mcp`.
 
 ### Configure (Claude Code)
 
@@ -45,7 +54,8 @@ Add to `.claude/.mcp.json`:
 {
   "mcpServers": {
     "anchor": {
-      "command": "anchor-mcp"
+      "command": "npx",
+      "args": ["-y", "@thewillmoss/anchor-mcp"]
     }
   }
 }
@@ -60,7 +70,7 @@ Add to `~/.config/opencode/opencode.json`:
   "mcp": {
     "anchor": {
       "type": "local",
-      "command": ["anchor-mcp"],
+      "command": ["npx", "-y", "@thewillmoss/anchor-mcp"],
       "enabled": true,
       "environment": {}
     }
@@ -74,7 +84,8 @@ Add to `.codex/config.toml`:
 
 ```toml
 [mcp_servers.anchor]
-command = "anchor-mcp"
+command = "npx"
+args = ["-y", "@thewillmoss/anchor-mcp"]
 ```
 
 ### Configure (Cursor / Windsurf)
@@ -84,7 +95,8 @@ Add to your MCP server settings:
 ```json
 {
   "anchor": {
-    "command": "anchor-mcp"
+    "command": "npx",
+    "args": ["-y", "@thewillmoss/anchor-mcp"]
   }
 }
 ```

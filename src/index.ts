@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 /**
  * anchor-mcp — Portable agent working state MCP server
  *
