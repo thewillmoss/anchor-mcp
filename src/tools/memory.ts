@@ -11,16 +11,16 @@ import { z } from "zod"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { AnchorStore } from "../store.js"
 import type { MemoryEntry, Scope } from "../types.js"
+import { ScopeSchema, pickStore, includeProjectScope } from "./shared.js"
 
 const MemoryAction = z.enum(["add", "search", "list"])
-const ScopeSchema = z.enum(["user", "project"])
 
 const MemoryManagerSchema = {
   action: MemoryAction.describe("The memory action to perform"),
   content: z.string().optional().describe("Memory content (required for add)"),
   tags: z.array(z.string()).optional().describe("Tags for categorization (for add)"),
   query: z.string().optional().describe("Search query (required for search)"),
-  limit: z.number().optional().describe("Max results to return (for search/list, default 20)"),
+  limit: z.number().int().positive().optional().describe("Max results to return (for search/list, default 20)"),
   scope: ScopeSchema.optional().describe(
     "Where to write, for 'add' (default 'user'): 'user' stores in ~/.anchor — private, never " +
       "committed, follows you across projects. 'project' stores in the repo's .anchor/ — shared " +
@@ -30,15 +30,6 @@ const MemoryManagerSchema = {
 }
 
 type ScopedMemoryEntry = MemoryEntry & { scope: Scope }
-
-/** Project-scope reads must degrade to empty, not error, outside a git repo. */
-function tryRead(fn: () => MemoryEntry[]): MemoryEntry[] {
-  try {
-    return fn()
-  } catch {
-    return []
-  }
-}
 
 function mergeScoped(project: MemoryEntry[], user: MemoryEntry[]): ScopedMemoryEntry[] {
   const merged: ScopedMemoryEntry[] = [
@@ -64,8 +55,7 @@ export function registerMemoryTools(server: McpServer, projectStore: AnchorStore
               return { content: [{ type: "text" as const, text: "Error: content is required for add" }] }
             }
             const scope: Scope = params.scope ?? "user"
-            const store = scope === "project" ? projectStore : userStore
-            const entry = store.addMemory(params.content, params.tags)
+            const entry = pickStore(scope, projectStore, userStore).addMemory(params.content, params.tags)
             return { content: [{ type: "text" as const, text: JSON.stringify({ ...entry, scope }, null, 2) }] }
           }
           case "search": {
@@ -73,8 +63,10 @@ export function registerMemoryTools(server: McpServer, projectStore: AnchorStore
               return { content: [{ type: "text" as const, text: "Error: query is required for search" }] }
             }
             const limit = params.limit ?? 20
-            const projectMatches = tryRead(() => projectStore.searchMemory(params.query!, Number.MAX_SAFE_INTEGER))
-            const userMatches = userStore.searchMemory(params.query, Number.MAX_SAFE_INTEGER)
+            const projectMatches = includeProjectScope(projectStore, userStore)
+              ? projectStore.searchMemory(params.query)
+              : []
+            const userMatches = userStore.searchMemory(params.query)
             const results = mergeScoped(projectMatches, userMatches).slice(-limit)
             return {
               content: results.length > 0
@@ -84,7 +76,7 @@ export function registerMemoryTools(server: McpServer, projectStore: AnchorStore
           }
           case "list": {
             const limit = params.limit ?? 20
-            const projectEntries = tryRead(() => projectStore.readMemory())
+            const projectEntries = includeProjectScope(projectStore, userStore) ? projectStore.readMemory() : []
             const userEntries = userStore.readMemory()
             const results = mergeScoped(projectEntries, userEntries).slice(-limit)
             return {

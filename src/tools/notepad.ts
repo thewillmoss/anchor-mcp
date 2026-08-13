@@ -10,9 +10,9 @@ import { z } from "zod"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { AnchorStore } from "../store.js"
 import type { Scope } from "../types.js"
+import { ScopeSchema, pickStore, includeProjectScope } from "./shared.js"
 
 const NotepadAction = z.enum(["get", "save", "list"])
-const ScopeSchema = z.enum(["user", "project"])
 
 const NotepadManagerSchema = {
   action: NotepadAction.describe("The notepad action to perform"),
@@ -23,23 +23,6 @@ const NotepadManagerSchema = {
       "the repo's .anchor/. 'save' defaults to 'user'. 'get' without a scope checks user first, " +
       "then falls back to project."
   ),
-}
-
-/** Project-scope reads must degrade to null/empty, not error, outside a git repo. */
-function tryGet(fn: () => string | null): string | null {
-  try {
-    return fn()
-  } catch {
-    return null
-  }
-}
-
-function tryList(fn: () => string[]): string[] {
-  try {
-    return fn()
-  } catch {
-    return []
-  }
 }
 
 export function registerNotepadTools(server: McpServer, projectStore: AnchorStore, userStore: AnchorStore): void {
@@ -58,37 +41,38 @@ export function registerNotepadTools(server: McpServer, projectStore: AnchorStor
               return { content: [{ type: "text" as const, text: "Error: topic is required for get" }] }
             }
             if (params.scope) {
-              const store = params.scope === "project" ? projectStore : userStore
+              const store = pickStore(params.scope, projectStore, userStore)
               const content = store.getNotepad(params.topic)
               return {
-                content: content
+                content: content !== null
                   ? [{ type: "text" as const, text: content }]
                   : [{ type: "text" as const, text: `Notepad '${params.topic}' not found in ${params.scope} scope.` }],
               }
             }
-            const userContent = tryGet(() => userStore.getNotepad(params.topic!))
-            if (userContent) {
+            const userContent = userStore.getNotepad(params.topic)
+            if (userContent !== null) {
               return { content: [{ type: "text" as const, text: userContent }] }
             }
-            const projectContent = tryGet(() => projectStore.getNotepad(params.topic!))
+            const projectContent = includeProjectScope(projectStore, userStore)
+              ? projectStore.getNotepad(params.topic)
+              : null
             return {
-              content: projectContent
+              content: projectContent !== null
                 ? [{ type: "text" as const, text: projectContent }]
                 : [{ type: "text" as const, text: `Notepad '${params.topic}' not found.` }],
             }
           }
           case "save": {
-            if (!params.topic || !params.content) {
+            if (!params.topic || params.content === undefined) {
               return { content: [{ type: "text" as const, text: "Error: topic and content are required for save" }] }
             }
             const scope: Scope = params.scope ?? "user"
-            const store = scope === "project" ? projectStore : userStore
-            store.saveNotepad(params.topic, params.content)
+            pickStore(scope, projectStore, userStore).saveNotepad(params.topic, params.content)
             return { content: [{ type: "text" as const, text: `Notepad '${params.topic}' saved (${scope} scope).` }] }
           }
           case "list": {
-            const user = tryList(() => userStore.listNotepads())
-            const project = tryList(() => projectStore.listNotepads())
+            const user = userStore.listNotepads()
+            const project = includeProjectScope(projectStore, userStore) ? projectStore.listNotepads() : []
             return {
               content: user.length > 0 || project.length > 0
                 ? [{ type: "text" as const, text: JSON.stringify({ user, project }, null, 2) }]
