@@ -220,6 +220,10 @@ notepads keep working anywhere.
   moment it lands, regardless of scope — rotate the credential first.
   Force-pushing a fix and asking GitHub Support to purge caches is cleanup,
   not an undo; treat anything pushed to a remote as permanently exposed.
+- **Upgrading from v0.1**: a generated `.gitignore` only stops files git
+  isn't tracking yet. If `.anchor/state.json` was already committed before
+  you upgraded, gitignore does nothing for it — untrack it once with
+  `git rm --cached .anchor/state.json` and commit that.
 
 ## License
 
