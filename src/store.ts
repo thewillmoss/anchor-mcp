@@ -36,6 +36,9 @@ function generateId(): string {
   return `task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
 
+/** Matches a single filename-safe path segment: no separators, no leading dot. */
+const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+
 export interface AnchorStoreOptions {
   /**
    * Absolute path to the anchor directory itself, bypassing the default
@@ -60,7 +63,6 @@ export interface AnchorStoreOptions {
 export class AnchorStore {
   private readonly anchorDir: string
   private readonly statePath: string
-  private readonly stateTmpPath: string
   private readonly memoryPath: string
   private readonly rulesPath: string
   private readonly plansDir: string
@@ -74,12 +76,21 @@ export class AnchorStore {
     this.generatesGitignore = options.anchorDir === undefined
     this.anchorDir = options.anchorDir ?? join(rootDir, ANCHOR_DIR)
     this.statePath = join(this.anchorDir, STATE_FILE)
-    this.stateTmpPath = this.statePath + ".tmp"
     this.memoryPath = join(this.anchorDir, MEMORY_FILE)
     this.rulesPath = join(this.anchorDir, RULES_FILE)
     this.plansDir = join(this.anchorDir, PLANS_DIR)
     this.notepadsDir = join(this.anchorDir, NOTEPADS_DIR)
     this.gitignorePath = join(this.anchorDir, GITIGNORE_FILE)
+  }
+
+  /** Absolute path to this store's anchor directory (used to detect project/user scope collisions). */
+  get anchorDirPath(): string {
+    return this.anchorDir
+  }
+
+  /** False when this store was constructed outside a git repository (project scope only). */
+  get available(): boolean {
+    return this.unavailableReason === undefined
   }
 
   // ── Availability guard ────────────────────────────────────────
@@ -90,19 +101,46 @@ export class AnchorStore {
     }
   }
 
+  /**
+   * Reject anything but a plain filename-safe identifier. `topic`, plan
+   * `name`, and plan `section` are user/LLM-controlled and get joined
+   * straight into filesystem paths — without this, "../../etc" style
+   * values could escape the anchor directory entirely.
+   */
+  private validateIdentifier(value: string, paramName: string): void {
+    if (!SAFE_IDENTIFIER.test(value) || value.includes("..")) {
+      throw new Error(
+        `anchor-mcp: invalid ${paramName} '${value}' — must contain only letters, numbers, ` +
+        `'.', '_', '-', start with a letter or number, and not contain '..'`
+      )
+    }
+  }
+
   // ── Directory management ──────────────────────────────────────
 
   private ensureAnchorDir(): void {
-    if (!existsSync(this.anchorDir)) {
-      mkdirSync(this.anchorDir, { recursive: true })
-      mkdirSync(this.plansDir, { recursive: true })
-      mkdirSync(this.notepadsDir, { recursive: true })
-    }
+    mkdirSync(this.anchorDir, { recursive: true })
+    // Idempotent even against a partial/committed .anchor/ (e.g. a fresh
+    // clone that has .gitignore + memory.jsonl but no notepads/ yet).
+    mkdirSync(this.plansDir, { recursive: true })
+    mkdirSync(this.notepadsDir, { recursive: true })
     // Project scope only, create-if-absent, never clobber a file the user
-    // may have extended (e.g. to also ignore memory.jsonl).
-    if (this.generatesGitignore && !existsSync(this.gitignorePath)) {
-      writeFileSync(this.gitignorePath, ANCHOR_GITIGNORE, "utf-8")
+    // may have extended (e.g. to also ignore memory.jsonl). "wx" is
+    // atomically create-exclusive — safe even against a dangling symlink.
+    if (this.generatesGitignore) {
+      try {
+        writeFileSync(this.gitignorePath, ANCHOR_GITIGNORE, { encoding: "utf-8", flag: "wx" })
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+      }
     }
+  }
+
+  /** Write-to-temp (unique per process+call) + rename, for crash-safe writes to `targetPath`. */
+  private writeFileAtomic(targetPath: string, content: string): void {
+    const tmpPath = `${targetPath}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`
+    writeFileSync(tmpPath, content, "utf-8")
+    renameSync(tmpPath, targetPath)
   }
 
   // ── State JSON (atomic writes) ────────────────────────────────
@@ -127,9 +165,7 @@ export class AnchorStore {
     this.ensureAnchorDir()
     state.version = SCHEMA_VERSION
     state.updatedAt = nowIso()
-    const json = JSON.stringify(state, null, 2)
-    writeFileSync(this.stateTmpPath, json, "utf-8")
-    renameSync(this.stateTmpPath, this.statePath)
+    this.writeFileAtomic(this.statePath, JSON.stringify(state, null, 2))
   }
 
   private defaultState(): AnchorState {
@@ -211,28 +247,47 @@ export class AnchorStore {
     for (const line of raw.split("\n")) {
       const trimmed = line.trim()
       if (!trimmed) continue
-      try {
-        entries.push(JSON.parse(trimmed))
-      } catch {
-        // Skip corrupt lines
+      const entry = this.parseMemoryLine(trimmed)
+      if (entry) {
+        entries.push(entry)
+      } else {
         console.error(`anchor-mcp: skipping corrupt memory line: ${trimmed.slice(0, 50)}`)
       }
     }
     return entries
   }
 
-  searchMemory(query: string, limit: number = 20): MemoryEntry[] {
+  /** Parse + shape-validate one JSONL line. One malformed entry must not take down search/list for the rest. */
+  private parseMemoryLine(line: string): MemoryEntry | null {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(line)
+    } catch {
+      return null
+    }
+    if (typeof parsed !== "object" || parsed === null) return null
+    const candidate = parsed as Record<string, unknown>
+    if (typeof candidate.content !== "string" || typeof candidate.timestamp !== "string") return null
+    return {
+      content: candidate.content,
+      timestamp: candidate.timestamp,
+      tags: Array.isArray(candidate.tags) ? candidate.tags.filter((t): t is string => typeof t === "string") : [],
+    }
+  }
+
+  searchMemory(query: string, limit?: number): MemoryEntry[] {
     this.assertAvailable()
     const lower = query.toLowerCase()
-    return this.readMemory()
+    const matches = this.readMemory()
       .filter(e => e.content.toLowerCase().includes(lower) || e.tags.some(t => t.toLowerCase().includes(lower)))
-      .slice(-limit)
+    return limit === undefined ? matches : matches.slice(-limit)
   }
 
   // ── Plans ─────────────────────────────────────────────────────
 
   getPlan(name: string): string | null {
     this.assertAvailable()
+    this.validateIdentifier(name, "name")
     const planPath = join(this.plansDir, name, "plan.md")
     if (!existsSync(planPath)) return null
     return readFileSync(planPath, "utf-8")
@@ -240,6 +295,8 @@ export class AnchorStore {
 
   getPlanSection(name: string, section: string): string | null {
     this.assertAvailable()
+    this.validateIdentifier(name, "name")
+    this.validateIdentifier(section, "section")
     const sectionPath = join(this.plansDir, name, `${section}.md`)
     if (!existsSync(sectionPath)) return null
     return readFileSync(sectionPath, "utf-8")
@@ -247,10 +304,12 @@ export class AnchorStore {
 
   savePlan(name: string, content: string, section: string = "plan"): void {
     this.assertAvailable()
+    this.validateIdentifier(name, "name")
+    this.validateIdentifier(section, "section")
     this.ensureAnchorDir()
     const planDir = join(this.plansDir, name)
     mkdirSync(planDir, { recursive: true })
-    writeFileSync(join(planDir, `${section}.md`), content, "utf-8")
+    this.writeFileAtomic(join(planDir, `${section}.md`), content)
   }
 
   listPlans(): string[] {
@@ -265,6 +324,7 @@ export class AnchorStore {
 
   getNotepad(topic: string): string | null {
     this.assertAvailable()
+    this.validateIdentifier(topic, "topic")
     const path = join(this.notepadsDir, `${topic}.md`)
     if (!existsSync(path)) return null
     return readFileSync(path, "utf-8")
@@ -272,8 +332,9 @@ export class AnchorStore {
 
   saveNotepad(topic: string, content: string): void {
     this.assertAvailable()
+    this.validateIdentifier(topic, "topic")
     this.ensureAnchorDir()
-    writeFileSync(join(this.notepadsDir, `${topic}.md`), content, "utf-8")
+    this.writeFileAtomic(join(this.notepadsDir, `${topic}.md`), content)
   }
 
   listNotepads(): string[] {
@@ -295,13 +356,14 @@ export class AnchorStore {
   saveRules(content: string): void {
     this.assertAvailable()
     this.ensureAnchorDir()
-    writeFileSync(this.rulesPath, content, "utf-8")
+    this.writeFileAtomic(this.rulesPath, content)
   }
 
   // ── Promote learning ──────────────────────────────────────────
 
   promoteLearning(planName: string): string | null {
     this.assertAvailable()
+    this.validateIdentifier(planName, "planName")
     const learningsPath = join(this.plansDir, planName, "learnings.md")
     if (!existsSync(learningsPath)) return null
     const learnings = readFileSync(learningsPath, "utf-8")
