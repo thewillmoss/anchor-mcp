@@ -20,7 +20,7 @@ const MemoryManagerSchema = {
   content: z.string().optional().describe("Memory content (required for add)"),
   tags: z.array(z.string()).optional().describe("Tags for categorization (for add)"),
   query: z.string().optional().describe("Search query (required for search)"),
-  limit: z.number().int().positive().optional().describe("Max results to return (for search/list, default 20)"),
+  limit: z.number().int().positive().max(1000).optional().describe("Max results to return (for search/list, default 20, max 1000)"),
   scope: ScopeSchema.optional().describe(
     "Where to write, for 'add' (default 'user'): 'user' stores in ~/.anchor — private, never " +
       "committed, follows you across projects. 'project' stores in the repo's .anchor/ — shared " +
