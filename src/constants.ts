@@ -20,7 +20,10 @@ export const ANCHOR_USER_DIR_ENV = "ANCHOR_USER_DIR"
 
 // ── Self-enforcing gitignore, written into the project .anchor/ ──
 export const GITIGNORE_FILE = ".gitignore"
+// A single glob, not separate state.json / state.json.tmp lines: atomic
+// writes now use a per-process-unique temp name (state.json.<pid>.<rand>.tmp),
+// and a corrupt state.json gets preserved as state.json.corrupt — all of
+// which must stay untracked, not just the two original literal names.
 export const ANCHOR_GITIGNORE = `# machine-specific — do not commit
-state.json
-state.json.tmp
+state.json*
 `

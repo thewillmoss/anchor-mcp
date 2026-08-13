@@ -1,3 +1,2 @@
 # machine-specific — do not commit
-state.json
-state.json.tmp
+state.json*
