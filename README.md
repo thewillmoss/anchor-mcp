@@ -11,7 +11,7 @@ Cursor, Windsurf, or any MCP-compatible agent.
 
 > **Status: early, and in daily use.** I run Anchor across Claude Code, Codex CLI,
 > and OpenCode every day; it is the reason it exists. The surface is small and
-> stable — 6 grouped tools, atomic writes, 22 tests. Expect the tool schemas to
+> stable — 6 grouped tools, two state scopes, atomic writes, 68 tests. Expect the tool schemas to
 > stay put and the internals to keep moving. Issues and reports welcome.
 
 ## Why?
@@ -116,6 +116,10 @@ Anchor provides 6 grouped tools. Each tool accepts an `action` parameter:
 | `rules_manager` | `get`, `save` | Manage project-specific agent instructions |
 | `promote_learning` | _(single action)_ | Promote plan learnings into project rules |
 
+`memory_manager` and `notepad_manager` also accept a `scope` param
+(`"user"` or `"project"`) — see [State directory](#state-directory) for the
+defaults and fall-through rules.
+
 ### Usage examples
 
 **Set an active task:**
@@ -128,36 +132,98 @@ task_manager(action="set_active", description="Implement user authentication")
 plan_manager(action="save", name="auth-flow", content="# Auth Flow Plan\n\n1. Add login endpoint\n2. Add JWT middleware")
 ```
 
-**Add a memory:**
+**Add a memory (defaults to private, user scope):**
 ```
 memory_manager(action="add", content="Always use httpOnly cookies for JWT", tags=["auth", "security"])
 ```
 
-**Search memories:**
+**Add a memory the whole team should see (opt into project scope):**
+```
+memory_manager(action="add", content="We use httpOnly cookies for JWT, decided in RFC-12", scope="project")
+```
+
+**Search memories (merges both scopes, each result labeled):**
 ```
 memory_manager(action="search", query="authentication")
 ```
 
 ## State directory
 
-Anchor stores state in `.anchor/` at your project root:
+Anchor splits state into two scopes, the same way git splits config into
+system/global/local — shared history stays a committed, PR-reviewed feature,
+while personal data structurally never enters the project repo.
+
+| Store | Project scope (`<worktree>/.anchor/`) | User scope (`~/.anchor/`) |
+|---|---|---|
+| tasks / `state.json` | yes — worktree-specific, gitignored | never |
+| `plans/` | yes — committed, PR-reviewed | never |
+| `rules.md` | yes — committed | never |
+| `memory.jsonl` | opt-in (`scope: "project"`) | **default** |
+| `notepads/` | opt-in (`scope: "project"`) | **default** |
+
+Tasks, plans, and rules stay project-only — they want PR review next to the
+code they describe. Memory and notepads follow the developer and carry the
+personal-data risk (pasted keys, client names, business numbers), so they
+default to user scope and reach the project repo only by deliberate choice
+(`scope: "project"` on `memory_manager` add, or `notepad_manager` save).
+`memory_manager search`/`list` and `notepad_manager get`/`list` always check
+both scopes — search/list merge and label each result, `get` checks user
+first and falls back to project.
+
+**Project scope** — `.anchor/` at your git worktree root:
 
 ```
 .anchor/
-├── state.json              # Active task + task list (gitignored)
+├── .gitignore               # generated on first write, never overwritten
+├── state.json                # active task + task list (gitignored)
 ├── plans/
 │   └── {plan-name}/
 │       ├── plan.md
 │       ├── issues.md
 │       └── learnings.md
-├── notepads/
+├── notepads/                 # only if scope: "project" was used
 │   └── {topic}.md
-├── memory.jsonl
+├── memory.jsonl               # only if scope: "project" was used
 └── rules.md
 ```
 
-Plans, notepads, rules, and memory are designed to be committed to git.
-`state.json` is machine-specific and should be gitignored.
+**User scope** — `~/.anchor/` by default, or `ANCHOR_USER_DIR` if set. Never
+created until the first user-scope write, and never touched by git — it can
+itself be a private git repo if you want history without a naming convention
+tying it to any one project:
+
+```
+~/.anchor/
+├── notepads/
+│   └── {topic}.md
+└── memory.jsonl
+```
+
+Outside a git repository, project-scope tools (`task_manager`, `plan_manager`,
+`rules_manager`, `promote_learning`, and project-scoped memory/notepad calls)
+return a clear error instead of crashing the server — user-scope memory and
+notepads keep working anywhere.
+
+## Privacy
+
+- **Where things land**: user scope (`~/.anchor`) is the default for memory
+  and notepads and is never read by git in your project. Project scope
+  (`<worktree>/.anchor`) is committed and PR-reviewed — use it deliberately,
+  via `scope: "project"`, only for things meant to be shared.
+- **The generated `.gitignore`**: the first write to a project's `.anchor/`
+  writes `.anchor/.gitignore` (ignoring `state.json` and `state.json.tmp`) if
+  one isn't already there. It's create-if-absent — extend it yourself (e.g.
+  to also ignore `memory.jsonl`) and Anchor will never overwrite your changes.
+  This makes "state.json is machine-specific" self-enforcing in every repo
+  Anchor touches.
+- **If a secret still lands in a pushed commit**: it's compromised the
+  moment it lands, regardless of scope — rotate the credential first.
+  Force-pushing a fix and asking GitHub Support to purge caches is cleanup,
+  not an undo; treat anything pushed to a remote as permanently exposed.
+- **Upgrading from v0.1**: a generated `.gitignore` only stops files git
+  isn't tracking yet. If `.anchor/state.json` was already committed before
+  you upgraded, gitignore does nothing for it — untrack it once with
+  `git rm --cached .anchor/state.json` and commit that.
 
 ## License
 

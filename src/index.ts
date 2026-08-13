@@ -6,7 +6,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { detectWorktreeRoot } from "./worktree.js";
+import { detectWorktreeRoot, resolveUserAnchorDir } from "./worktree.js";
 import { AnchorStore } from "./store.js";
 import { registerTaskTools } from "./tools/task.js";
 import { registerPlanTools } from "./tools/plan.js";
@@ -17,18 +17,30 @@ import { registerPromoteTool } from "./tools/promote.js";
 
 const server = new McpServer({
   name: "anchor-mcp",
-  version: "0.1.0",
+  version: "0.2.0",
 });
 
-const rootDir = detectWorktreeRoot();
-const store = new AnchorStore(rootDir);
+// Project scope requires a git worktree. Outside one, don't crash the whole
+// server (a globally-configured anchor would otherwise fail in every
+// non-git session) — catch here and let project-scope tools fail clearly,
+// per call, while user-scope memory/notepad tools keep working anywhere.
+let worktreeError: string | undefined;
+let rootDir = "";
+try {
+  rootDir = detectWorktreeRoot();
+} catch (error) {
+  worktreeError = error instanceof Error ? error.message : String(error);
+}
 
-registerTaskTools(server, store);
-registerPlanTools(server, store);
-registerNotepadTools(server, store);
-registerMemoryTools(server, store);
-registerRulesTools(server, store);
-registerPromoteTool(server, store);
+const projectStore = new AnchorStore(rootDir, { unavailableReason: worktreeError });
+const userStore = new AnchorStore("", { anchorDir: resolveUserAnchorDir(), privateMode: true });
+
+registerTaskTools(server, projectStore);
+registerPlanTools(server, projectStore);
+registerNotepadTools(server, projectStore, userStore);
+registerMemoryTools(server, projectStore, userStore);
+registerRulesTools(server, projectStore);
+registerPromoteTool(server, projectStore);
 
 async function main() {
   const transport = new StdioServerTransport();

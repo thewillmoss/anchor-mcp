@@ -10,7 +10,6 @@ import type { AnchorStore } from "../store.js"
 
 const PromoteLearningSchema = {
   planName: z.string().describe("Name of the plan to promote learnings from"),
-  learningIndex: z.number().optional().describe("Optional: specific learning index to promote (promotes all if omitted)"),
 }
 
 export function registerPromoteTool(server: McpServer, store: AnchorStore): void {
@@ -20,7 +19,7 @@ export function registerPromoteTool(server: McpServer, store: AnchorStore): void
     PromoteLearningSchema,
     async (params) => {
       try {
-        const result = store.promoteLearning(params.planName, params.learningIndex)
+        const result = store.promoteLearning(params.planName)
         if (!result) {
           return {
             content: [{ type: "text" as const, text: `No learnings found for plan '${params.planName}'.` }],

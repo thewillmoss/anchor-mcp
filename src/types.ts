@@ -29,40 +29,9 @@ export interface MemoryEntry {
 
 export type PlanSection = "plan" | "issues" | "learnings"
 
-export interface TaskManagerInput {
-  action: "get_active" | "set_active" | "complete" | "list"
-  taskId?: string
-  description?: string
-  status?: TaskStatus
-}
-
-export interface PlanManagerInput {
-  action: "get" | "save" | "list"
-  name?: string
-  content?: string
-  section?: PlanSection
-}
-
-export interface NotepadManagerInput {
-  action: "get" | "save" | "list"
-  topic?: string
-  content?: string
-}
-
-export interface MemoryManagerInput {
-  action: "add" | "search" | "list"
-  content?: string
-  tags?: string[]
-  query?: string
-  limit?: number
-}
-
-export interface RulesManagerInput {
-  action: "get" | "save"
-  content?: string
-}
-
-export interface PromoteLearningInput {
-  planName: string
-  learningIndex?: number
-}
+/**
+ * Two-scope model, like git config system/global/local:
+ * - "user": ~/.anchor (or ANCHOR_USER_DIR) — private, never committed, follows the developer.
+ * - "project": <worktree>/.anchor — shared, PR-reviewed, committed with the code.
+ */
+export type Scope = "user" | "project"
