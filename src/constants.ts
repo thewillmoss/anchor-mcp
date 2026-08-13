@@ -11,3 +11,13 @@ export const RULES_FILE = "rules.md"
 export const PLANS_DIR = "plans"
 export const NOTEPADS_DIR = "notepads"
 export const SCHEMA_VERSION = 1
+
+// ── User scope (~/.anchor, overridable via ANCHOR_USER_DIR) ──────
+export const ANCHOR_USER_DIR_ENV = "ANCHOR_USER_DIR"
+
+// ── Self-enforcing gitignore, written into the project .anchor/ ──
+export const GITIGNORE_FILE = ".gitignore"
+export const ANCHOR_GITIGNORE = `# machine-specific — do not commit
+state.json
+state.json.tmp
+`

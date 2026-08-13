@@ -6,7 +6,9 @@
  */
 
 import { existsSync } from "node:fs"
+import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
+import { ANCHOR_DIR, ANCHOR_USER_DIR_ENV } from "./constants.js"
 
 /**
  * Detect the git worktree root directory.
@@ -39,4 +41,22 @@ export function detectWorktreeRoot(startDir: string = process.cwd()): string {
     "anchor-mcp: not inside a git repository. " +
     "Set ANCHOR_STATE_DIR env var to override."
   )
+}
+
+/**
+ * Resolve the user-scope anchor root.
+ *
+ * Unlike project scope, this never throws — user-scope memory and notepad
+ * tools must work from anywhere, git repo or not.
+ *
+ * Algorithm:
+ * 1. Check ANCHOR_USER_DIR env var (override)
+ * 2. Default to `~/.anchor`
+ */
+export function resolveUserAnchorDir(): string {
+  const envOverride = process.env[ANCHOR_USER_DIR_ENV]
+  if (envOverride) {
+    return resolve(envOverride)
+  }
+  return join(homedir(), ANCHOR_DIR)
 }

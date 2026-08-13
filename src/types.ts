@@ -29,6 +29,13 @@ export interface MemoryEntry {
 
 export type PlanSection = "plan" | "issues" | "learnings"
 
+/**
+ * Two-scope model, like git config system/global/local:
+ * - "user": ~/.anchor (or ANCHOR_USER_DIR) — private, never committed, follows the developer.
+ * - "project": <worktree>/.anchor — shared, PR-reviewed, committed with the code.
+ */
+export type Scope = "user" | "project"
+
 export interface TaskManagerInput {
   action: "get_active" | "set_active" | "complete" | "list"
   taskId?: string
@@ -47,6 +54,7 @@ export interface NotepadManagerInput {
   action: "get" | "save" | "list"
   topic?: string
   content?: string
+  scope?: Scope
 }
 
 export interface MemoryManagerInput {
@@ -55,6 +63,7 @@ export interface MemoryManagerInput {
   tags?: string[]
   query?: string
   limit?: number
+  scope?: Scope
 }
 
 export interface RulesManagerInput {
@@ -64,5 +73,4 @@ export interface RulesManagerInput {
 
 export interface PromoteLearningInput {
   planName: string
-  learningIndex?: number
 }
