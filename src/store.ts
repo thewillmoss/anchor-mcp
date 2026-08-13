@@ -112,17 +112,22 @@ export class AnchorStore {
    * sane filename. `topic`, plan `name`, plan `section`, and `planName`
    * are user/LLM-controlled and get joined straight into filesystem
    * paths. This is a denylist, not an allowlist: v0.1 data may have
-   * spaces or unicode in these fields (both legal, both fine on disk),
-   * so only traversal-shaped or otherwise unsafe values are rejected.
+   * spaces, unicode, or embedded dots in these fields (all legal, all
+   * fine on disk — a plan legitimately named "v1..v2" must stay
+   * reachable), so only traversal-shaped or otherwise unsafe values are
+   * rejected. Note ".." alone is *not* banned as a substring: once '/'
+   * and '\' are banned, a lone path segment containing ".." (anywhere
+   * but leading) can't traverse anywhere — path.join has nothing to
+   * traverse across within a single segment.
    */
   private validateIdentifier(value: string, paramName: string): void {
     let reason: string | null = null
     if (value.length === 0) {
       reason = "must not be empty"
+    } else if (value === "." || value === "..") {
+      reason = `must not be '${value}'`
     } else if (value.includes("/") || value.includes("\\")) {
       reason = "must not contain '/' or '\\'"
-    } else if (value.includes("..")) {
-      reason = "must not contain '..'"
     } else if (value.startsWith(".")) {
       reason = "must not start with '.'"
     } else {
