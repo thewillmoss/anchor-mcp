@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
-import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs"
+import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, appendFileSync, symlinkSync, statSync } from "node:fs"
 import { join } from "node:path"
-import { tmpdir } from "node:os"
+import { tmpdir, platform } from "node:os"
 import { AnchorStore } from "../src/store"
 
 describe("AnchorStore scopes and gitignore", () => {
@@ -37,8 +37,7 @@ describe("AnchorStore scopes and gitignore", () => {
     const gitignorePath = join(projectDir, ".anchor", ".gitignore")
     expect(existsSync(gitignorePath)).toBe(true)
     const content = readFileSync(gitignorePath, "utf-8")
-    expect(content).toContain("state.json")
-    expect(content).toContain("state.json.tmp")
+    expect(content).toContain("state.json*")
   })
 
   it("never overwrites an existing .gitignore", () => {
@@ -210,5 +209,101 @@ describe("AnchorStore scopes and gitignore", () => {
     writeFileSync(join(projectDir, ".anchor", "rules.md"), "# Rules\n", "utf-8")
     expect(() => store.savePlan("fresh-clone-plan", "content")).not.toThrow()
     expect(store.getPlan("fresh-clone-plan")).toBe("content")
+  })
+
+  // ── Identifier denylist, not allowlist (batch 2, item 2) ───────────
+  // v0.1 data may have spaces or unicode in topics/plan names — both are
+  // legal on disk and must keep working. Only traversal-shaped or unsafe
+  // values are rejected.
+
+  it("round-trips a notepad topic with spaces and unicode", () => {
+    const store = new AnchorStore(projectDir)
+    const topic = "sprint notes 会議 café"
+    store.saveNotepad(topic, "content")
+    expect(store.getNotepad(topic)).toBe("content")
+    expect(store.listNotepads()).toContain(topic)
+  })
+
+  it("round-trips a plan name with spaces", () => {
+    const store = new AnchorStore(projectDir)
+    store.savePlan("v0.2 scopes and privacy", "plan content")
+    expect(store.getPlan("v0.2 scopes and privacy")).toBe("plan content")
+  })
+
+  it("still rejects traversal, empty, leading-dot, and control-char identifiers", () => {
+    const store = new AnchorStore(projectDir)
+    expect(() => store.saveNotepad("../escaped", "c")).toThrow(/invalid topic/)
+    expect(() => store.saveNotepad("a/b", "c")).toThrow(/invalid topic/)
+    expect(() => store.saveNotepad("a\\b", "c")).toThrow(/invalid topic/)
+    expect(() => store.saveNotepad("", "c")).toThrow(/invalid topic/)
+    expect(() => store.saveNotepad(".hidden", "c")).toThrow(/invalid topic/)
+    expect(() => store.saveNotepad("badbell", "c")).toThrow(/invalid topic/)
+  })
+
+  // ── Symlink guard (batch 2, item 3) ─────────────────────────────────
+
+  it("refuses to read a notepad file that is a symlink", () => {
+    const store = new AnchorStore(projectDir)
+    store.saveNotepad("legit", "safe content")
+    const outsideSecret = join(testDir, "host-secret.txt")
+    writeFileSync(outsideSecret, "arbitrary host file contents", "utf-8")
+    const notepadPath = join(projectDir, ".anchor", "notepads", "evil.md")
+    symlinkSync(outsideSecret, notepadPath)
+    expect(() => store.getNotepad("evil")).toThrow(/symlink/)
+  })
+
+  it("refuses to append memory through a symlinked memory.jsonl", () => {
+    const store = new AnchorStore(projectDir)
+    mkdirSync(join(projectDir, ".anchor"), { recursive: true })
+    const outsideTarget = join(testDir, "host-memory.jsonl")
+    writeFileSync(outsideTarget, "", "utf-8")
+    symlinkSync(outsideTarget, join(projectDir, ".anchor", "memory.jsonl"))
+    expect(() => store.addMemory("should not land in the host file")).toThrow(/symlink/)
+    expect(readFileSync(outsideTarget, "utf-8")).toBe("")
+  })
+
+  // ── Private mode file/dir permissions (batch 2, item 4) ─────────────
+  // chmod semantics aren't meaningful on Windows.
+  const describeUnix = platform() === "win32" ? describe.skip : describe
+
+  describeUnix("privateMode", () => {
+    it("creates the anchor dir 0o700 and memory.jsonl 0o600", () => {
+      const privateDir = join(testDir, "private-user-home", ".anchor")
+      const store = new AnchorStore("", { anchorDir: privateDir, privateMode: true })
+      store.addMemory("secret")
+      const dirMode = statSync(privateDir).mode & 0o777
+      const fileMode = statSync(join(privateDir, "memory.jsonl")).mode & 0o777
+      expect(dirMode).toBe(0o700)
+      expect(fileMode).toBe(0o600)
+    })
+
+    it("does not force private perms on the project store", () => {
+      const store = new AnchorStore(projectDir)
+      store.addMemory("not private")
+      const dirMode = statSync(join(projectDir, ".anchor")).mode & 0o777
+      expect(dirMode).not.toBe(0o700)
+    })
+  })
+
+  // ── Corrupt state.json preservation (batch 2, item 5) ───────────────
+
+  it("preserves a corrupt state.json as state.json.corrupt instead of destroying it", () => {
+    const store = new AnchorStore(projectDir)
+    mkdirSync(join(projectDir, ".anchor"), { recursive: true })
+    const statePath = join(projectDir, ".anchor", "state.json")
+    writeFileSync(statePath, "{ not valid json", "utf-8")
+
+    const state = store.readState()
+    expect(state.tasks).toEqual([]) // fell back to default
+
+    const corruptPath = join(projectDir, ".anchor", "state.json.corrupt")
+    expect(existsSync(corruptPath)).toBe(true)
+    expect(readFileSync(corruptPath, "utf-8")).toBe("{ not valid json")
+
+    // The next write must not destroy the preserved file.
+    store.writeState(state)
+    expect(existsSync(corruptPath)).toBe(true)
+    expect(readFileSync(corruptPath, "utf-8")).toBe("{ not valid json")
+    expect(store.readState().tasks).toEqual([])
   })
 })

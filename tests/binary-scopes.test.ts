@@ -181,6 +181,22 @@ describe("built binary — scope behavior outside a git repo", () => {
         resNegative?.result?.isError,
         `expected a validation error, got: ${JSON.stringify(resNegative)}`,
       ).toBe(true);
+
+      const messagesTooLarge = await callBinary(
+        [
+          {
+            id: 2,
+            method: "tools/call",
+            params: { name: "memory_manager", arguments: { action: "search", query: "x", limit: 5000 } },
+          },
+        ],
+        { cwd: nonGitCwd, env: { ANCHOR_USER_DIR: join(userDir, "limit-too-large") } },
+      );
+      const resTooLarge = messagesTooLarge.find((m) => m.id === 2);
+      expect(
+        resTooLarge?.result?.isError,
+        `expected a validation error for limit: 5000, got: ${JSON.stringify(resTooLarge)}`,
+      ).toBe(true);
     },
     20_000,
   );
