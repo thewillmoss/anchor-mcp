@@ -145,4 +145,86 @@ describe("memory_manager / notepad_manager scope routing", () => {
     const result = await call({ action: "add", content: "x", scope: "project" })
     expect(text(result)).toContain("not inside a git repository")
   })
+
+  it("notepad explicit scope=project get/save errors clearly outside a git repo", async () => {
+    const unavailableProjectStore = new AnchorStore(projectDir, {
+      unavailableReason: "anchor-mcp: not inside a git repository.",
+    })
+    const call = captureHandler((s) => registerNotepadTools(s, unavailableProjectStore, userStore))
+    const saveResult = await call({ action: "save", topic: "t", content: "c", scope: "project" })
+    expect(text(saveResult)).toContain("not inside a git repository")
+    const getResult = await call({ action: "get", topic: "t", scope: "project" })
+    expect(text(getResult)).toContain("not inside a git repository")
+  })
+
+  // ── Explicit-scope get: found vs. not-found-in-scope (item N.5) ──
+
+  it("notepad explicit-scope get reports 'not found in X scope' distinctly per scope", async () => {
+    const call = captureHandler((s) => registerNotepadTools(s, projectStore, userStore))
+    await call({ action: "save", topic: "only-in-project", content: "p", scope: "project" })
+
+    const foundInProject = await call({ action: "get", topic: "only-in-project", scope: "project" })
+    expect(text(foundInProject)).toBe("p")
+
+    const missingInUser = await call({ action: "get", topic: "only-in-project", scope: "user" })
+    expect(text(missingInUser)).toContain("not found in user scope")
+
+    const missingEntirely = await call({ action: "get", topic: "nope", scope: "project" })
+    expect(text(missingEntirely)).toContain("not found in project scope")
+  })
+
+  // ── Merge recency (item N.7): limit keeps the newest N, by content ──
+
+  it("memory search/list keep the newest entries by timestamp across scopes, not by scope order", async () => {
+    const call = captureHandler((s) => registerMemoryTools(s, projectStore, userStore))
+    // Interleave writes across scopes with a real time gap so timestamps
+    // are strictly increasing and ordering is unambiguous.
+    await call({ action: "add", content: "oldest", scope: "user" })
+    await new Promise(r => setTimeout(r, 5))
+    await call({ action: "add", content: "middle", scope: "project" })
+    await new Promise(r => setTimeout(r, 5))
+    await call({ action: "add", content: "newest", scope: "user" })
+
+    const result = await call({ action: "list", limit: 2 })
+    const parsed = JSON.parse(text(result))
+    expect(parsed.map((e: any) => e.content)).toEqual(["middle", "newest"])
+  })
+
+  // ── Empty-string user notepad must not fall through (item N.10) ──
+
+  it("notepad get: an empty-string user notepad is not treated as missing", async () => {
+    const call = captureHandler((s) => registerNotepadTools(s, projectStore, userStore))
+    await call({ action: "save", topic: "shared", content: "project fallback", scope: "project" })
+    await call({ action: "save", topic: "shared", content: "", scope: "user" })
+    const result = await call({ action: "get", topic: "shared" })
+    expect(text(result)).toBe("")
+  })
+
+  // ── Same-dir collision (item C): project === user anchorDir ──────
+
+  it("memory search/list treat identical project/user anchorDirs as user-scope only (no double-listing)", async () => {
+    const sameDir = join(testDir, "shared-anchor-dir")
+    const collidingProjectStore = new AnchorStore("", { anchorDir: sameDir })
+    // A distinct AnchorStore instance pointed at the exact same directory —
+    // mirrors $HOME being a git repo, or ANCHOR_STATE_DIR=$HOME.
+    const collidingUserStore = new AnchorStore("", { anchorDir: sameDir })
+    const call = captureHandler((s) => registerMemoryTools(s, collidingProjectStore, collidingUserStore))
+    await call({ action: "add", content: "one entry" })
+    const result = await call({ action: "list" })
+    const parsed = JSON.parse(text(result))
+    expect(parsed).toHaveLength(1)
+    expect(parsed[0].scope).toBe("user")
+  })
+
+  it("notepad list treats identical project/user anchorDirs as user-scope only", async () => {
+    const sameDir = join(testDir, "shared-anchor-dir-notepad")
+    const collidingProjectStore = new AnchorStore("", { anchorDir: sameDir })
+    const collidingUserStore = new AnchorStore("", { anchorDir: sameDir })
+    const call = captureHandler((s) => registerNotepadTools(s, collidingProjectStore, collidingUserStore))
+    await call({ action: "save", topic: "solo", content: "x" })
+    const result = await call({ action: "list" })
+    const parsed = JSON.parse(text(result))
+    expect(parsed.user).toEqual(["solo"])
+    expect(parsed.project).toEqual([])
+  })
 })

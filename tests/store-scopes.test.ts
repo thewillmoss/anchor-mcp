@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest"
-import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { AnchorStore } from "../src/store"
@@ -87,5 +87,128 @@ describe("AnchorStore scopes and gitignore", () => {
     expect(() => store.listNotepads()).toThrow(reason)
     // No filesystem side effects — the dir is never created.
     expect(existsSync(join(projectDir, ".anchor"))).toBe(false)
+  })
+
+  it("write methods on an unavailable store also throw and create no directory", () => {
+    const reason = "anchor-mcp: not inside a git repository."
+    const store = new AnchorStore(projectDir, { unavailableReason: reason })
+    const dummyState = { version: 1 as const, activeTask: null, tasks: [], updatedAt: "" }
+    expect(() => store.writeState(dummyState)).toThrow(reason)
+    expect(() => store.addMemory("x")).toThrow(reason)
+    expect(() => store.saveNotepad("t", "c")).toThrow(reason)
+    expect(() => store.saveRules("r")).toThrow(reason)
+    expect(() => store.savePlan("p", "c")).toThrow(reason)
+    expect(existsSync(join(projectDir, ".anchor"))).toBe(false)
+  })
+
+  it("exposes availability via the `available` getter", () => {
+    const available = new AnchorStore(projectDir)
+    expect(available.available).toBe(true)
+    const unavailable = new AnchorStore(projectDir, { unavailableReason: "nope" })
+    expect(unavailable.available).toBe(false)
+  })
+
+  it("exposes the resolved anchor dir via `anchorDirPath`", () => {
+    const store = new AnchorStore(projectDir)
+    expect(store.anchorDirPath).toBe(join(projectDir, ".anchor"))
+    const userStore = new AnchorStore("", { anchorDir: userDir })
+    expect(userStore.anchorDirPath).toBe(userDir)
+  })
+
+  // ── Path traversal rejection (fix A) ─────────────────────────────
+
+  it("rejects a traversal notepad topic and writes nothing outside notepads/", () => {
+    const store = new AnchorStore(projectDir)
+    expect(() => store.saveNotepad("../escaped", "content")).toThrow(/invalid topic/)
+    expect(() => store.getNotepad("../escaped")).toThrow(/invalid topic/)
+    // Would have landed one level up from notepads/, i.e. directly in .anchor/, had it not thrown.
+    expect(existsSync(join(projectDir, ".anchor", "escaped.md"))).toBe(false)
+  })
+
+  it("rejects a traversal plan name", () => {
+    const store = new AnchorStore(projectDir)
+    expect(() => store.savePlan("../../escaped", "content")).toThrow(/invalid name/)
+    expect(() => store.getPlan("../../escaped")).toThrow(/invalid name/)
+    // Nothing escaped into the grandparent of the anchor dir.
+    expect(existsSync(join(projectDir, "..", "..", "escaped"))).toBe(false)
+  })
+
+  it("rejects a traversal plan section", () => {
+    const store = new AnchorStore(projectDir)
+    store.savePlan("legit-plan", "content")
+    expect(() => store.savePlan("legit-plan", "content", "../escaped")).toThrow(/invalid section/)
+    expect(() => store.getPlanSection("legit-plan", "../escaped")).toThrow(/invalid section/)
+  })
+
+  it("rejects a traversal promote_learning planName", () => {
+    const store = new AnchorStore(projectDir)
+    expect(() => store.promoteLearning("../escaped")).toThrow(/invalid planName/)
+  })
+
+  // ── promote_learning ──────────────────────────────────────────────
+
+  it("promoteLearning appends found learnings to rules", () => {
+    const store = new AnchorStore(projectDir)
+    store.savePlan("my-plan", "## Learnings\n\nUse atomic writes.", "learnings")
+    const result = store.promoteLearning("my-plan")
+    expect(result).toContain("Use atomic writes")
+    expect(store.getRules()).toContain("Use atomic writes")
+    expect(store.getRules()).toContain("Promoted from plan: my-plan")
+  })
+
+  it("promoteLearning returns null when no learnings.md exists", () => {
+    const store = new AnchorStore(projectDir)
+    store.savePlan("no-learnings-plan", "just a plan")
+    expect(store.promoteLearning("no-learnings-plan")).toBeNull()
+  })
+
+  // ── Malformed JSONL (fix E) ────────────────────────────────────────
+
+  it("skips malformed memory lines without breaking the rest", () => {
+    const store = new AnchorStore(projectDir)
+    store.addMemory("good entry one", ["a"])
+    // A bare JSON number (valid JSON, wrong shape) and an object missing timestamp.
+    appendFileSync(join(projectDir, ".anchor", "memory.jsonl"), "123\n", "utf-8")
+    appendFileSync(join(projectDir, ".anchor", "memory.jsonl"), JSON.stringify({ content: "x" }) + "\n", "utf-8")
+    store.addMemory("good entry two", ["b"])
+    const entries = store.readMemory()
+    expect(entries).toHaveLength(2)
+    expect(entries[0].content).toBe("good entry one")
+    expect(entries[1].content).toBe("good entry two")
+    // search must not throw despite the malformed lines
+    expect(store.searchMemory("good entry")).toHaveLength(2)
+  })
+
+  it("defaults missing tags to [] on read", () => {
+    const store = new AnchorStore(projectDir)
+    mkdirSync(join(projectDir, ".anchor"), { recursive: true })
+    appendFileSync(
+      join(projectDir, ".anchor", "memory.jsonl"),
+      JSON.stringify({ content: "no tags field", timestamp: "2025-01-01T00:00:00.000Z" }) + "\n",
+      "utf-8"
+    )
+    const entries = store.readMemory()
+    expect(entries).toHaveLength(1)
+    expect(entries[0].tags).toEqual([])
+  })
+
+  // ── Committed-.anchor clone regression (fix F) ────────────────────
+
+  it("saveNotepad succeeds against a committed .anchor/ that has only a .gitignore", () => {
+    const store = new AnchorStore(projectDir)
+    mkdirSync(join(projectDir, ".anchor"), { recursive: true })
+    writeFileSync(join(projectDir, ".anchor", ".gitignore"), "state.json\n", "utf-8")
+    // No plans/ or notepads/ subdirectory yet — this is what a fresh clone
+    // of a committed .anchor/ looks like before v0.2's mkdir-both-always fix.
+    expect(() => store.saveNotepad("fresh-clone-topic", "content")).not.toThrow()
+    expect(store.getNotepad("fresh-clone-topic")).toBe("content")
+  })
+
+  it("savePlan succeeds against a committed .anchor/ missing plans/", () => {
+    const store = new AnchorStore(projectDir)
+    mkdirSync(join(projectDir, ".anchor"), { recursive: true })
+    writeFileSync(join(projectDir, ".anchor", "rules.md"), "# Rules\n", "utf-8")
+    expect(() => store.savePlan("fresh-clone-plan", "content")).not.toThrow()
+    expect(store.getPlan("fresh-clone-plan")).toBe("content")
   })
 })
