@@ -230,12 +230,23 @@ describe("AnchorStore scopes and gitignore", () => {
     expect(store.getPlan("v0.2 scopes and privacy")).toBe("plan content")
   })
 
-  it("still rejects traversal, empty, leading-dot, and control-char identifiers", () => {
+  it("round-trips a plan name with an embedded '..' (not leading, not a separator)", () => {
+    const store = new AnchorStore(projectDir)
+    // Legitimate v0.1 naming like "v1..v2" -- a bare '..' substring cannot
+    // traverse anywhere once '/' and '\\' are banned, so it is allowed.
+    store.savePlan("v1..v2", "diff plan content")
+    expect(store.getPlan("v1..v2")).toBe("diff plan content")
+    expect(store.listPlans()).toContain("v1..v2")
+  })
+
+  it("still rejects traversal, empty, exact '.'/'..', leading-dot, and control-char identifiers", () => {
     const store = new AnchorStore(projectDir)
     expect(() => store.saveNotepad("../escaped", "c")).toThrow(/invalid topic/)
     expect(() => store.saveNotepad("a/b", "c")).toThrow(/invalid topic/)
     expect(() => store.saveNotepad("a\\b", "c")).toThrow(/invalid topic/)
     expect(() => store.saveNotepad("", "c")).toThrow(/invalid topic/)
+    expect(() => store.saveNotepad(".", "c")).toThrow(/invalid topic/)
+    expect(() => store.saveNotepad("..", "c")).toThrow(/invalid topic/)
     expect(() => store.saveNotepad(".hidden", "c")).toThrow(/invalid topic/)
     expect(() => store.saveNotepad("badbell", "c")).toThrow(/invalid topic/)
   })
