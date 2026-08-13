@@ -151,6 +151,23 @@ every repo anchor touches, without contradicting the committed-state design.
 
 ## Explicitly deferred to v0.3+ (do not pull in)
 
+From the ship review battery (2026-08-12, Claude + Codex adversarial):
+- Cross-project user-scope exposure: any repo's session can read all user-scope
+  memory/notepads — deliberate in v0.2 (it's the "follows you" feature), but
+  prompt-injection read-gating and/or per-project namespacing under `~/.anchor`
+  needs a design pass.
+- Notepad topic collisions across projects (last-writer-wins in user scope) —
+  same namespacing design pass.
+- `isError: true` on tool error results (currently error text in a success shape).
+- fsync durability for atomic writes; file locking / compare-and-swap for
+  concurrent sessions (lost-update window remains).
+- Write-side handling when project and user scope resolve to the same dir
+  ($HOME as a git repo) — v0.2 only suppresses the read-side double-listing.
+- Size caps on memory content/tags; tail-read or mtime cache for large
+  memory.jsonl (unbounded full-file parse per search today).
+- Symlink guard covers leaf files only — an intermediate directory
+  (`.anchor/plans/<name>` itself) committed as a symlink is not checked.
+
 - Ticket-grade task schema (`blocked_by`, `touches`, `end_proof`, claim-with-
   conflict-refusal) and the markdown-frontmatter task-store decision.
 - Learnings schema upgrade (`signature`, `appliesTo`, `graduated`, `hits`) +
