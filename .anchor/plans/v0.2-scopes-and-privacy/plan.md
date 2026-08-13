@@ -64,9 +64,9 @@ every repo anchor touches, without contradicting the committed-state design.
 ## Work items
 
 ### 1. `src/worktree.ts` — user root resolution
-- [ ] `resolveUserAnchorDir(): string` — `ANCHOR_USER_DIR` (resolved) else
+- [x] `resolveUserAnchorDir(): string` — `ANCHOR_USER_DIR` (resolved) else
       `join(homedir(), ".anchor")`.
-- [ ] Graceful startup outside a git repo: `detectWorktreeRoot()` currently throws
+- [x] Graceful startup outside a git repo: `detectWorktreeRoot()` currently throws
       at module load (`src/index.ts:23`), so a globally-configured anchor shows as
       a failed MCP server in every non-git session. With user scope this is wrong,
       not just noisy — user-scope memory/notepads should work anywhere. Detect
@@ -74,64 +74,64 @@ every repo anchor touches, without contradicting the committed-state design.
       a git repository" error per call; user-scope tools work normally.
 
 ### 2. `src/store.ts` — store plumbing
-- [ ] `AnchorStore` constructor accepts an options bag `{ anchorDir?: string }`
+- [x] `AnchorStore` constructor accepts an options bag `{ anchorDir?: string }`
       so the user store can point at `~/.anchor` directly (today the store always
       joins `rootDir + ".anchor"`, which would yield `~/.anchor/.anchor`).
-- [ ] `ensureAnchorDir()` writes the `.gitignore` above when creating the dir
+- [x] `ensureAnchorDir()` writes the `.gitignore` above when creating the dir
       (and when the dir exists but has no `.gitignore` — idempotent, never clobbers).
       Gate it: only for the project store (pass a flag or check via options).
-- [ ] Remove the unused `resolve` import if still unused after changes.
+- [x] Remove the unused `resolve` import if still unused after changes.
 
 ### 3. `src/index.ts` — composition
-- [ ] Instantiate `projectStore` (as today) and `userStore`
+- [x] Instantiate `projectStore` (as today) and `userStore`
       (`new AnchorStore("", { anchorDir: resolveUserAnchorDir() })`).
-- [ ] Pass both to memory and notepad registrars; project-only tools unchanged.
+- [x] Pass both to memory and notepad registrars; project-only tools unchanged.
 
 ### 4. `src/tools/memory.ts`
-- [ ] `scope` param on `add` (enum `user | project`, default `user`), describe the
+- [x] `scope` param on `add` (enum `user | project`, default `user`), describe the
       privacy rationale in the param description so agents pick correctly.
-- [ ] `search`/`list` merge both stores; each returned entry gains `scope` field.
+- [x] `search`/`list` merge both stores; each returned entry gains `scope` field.
       Keep `limit` applied after merge, newest-last as today.
 
 ### 5. `src/tools/notepad.ts`
-- [ ] `scope` param on `save` (default `user`) and `get` (optional; omitted =
+- [x] `scope` param on `save` (default `user`) and `get` (optional; omitted =
       user-then-project fall-through). `list` returns
       `{ user: string[], project: string[] }` or labeled flat list — pick one,
       document it in the tool description.
 
 ### 6. `src/tools/promote.ts` + `src/store.ts`
-- [ ] Drop the `learningIndex` param entirely (it is accepted and ignored today —
+- [x] Drop the `learningIndex` param entirely (it is accepted and ignored today —
       `store.ts` `promoteLearning`). Honest surface over dead surface; revisit if
       a real need appears. Note in CHANGELOG since it's a (trivial) schema change.
 
 ### 7. `src/types.ts` / `src/constants.ts`
-- [ ] `Scope` type, scope fields on the manager input interfaces, user-dir constant.
+- [x] `Scope` type, scope fields on the manager input interfaces, user-dir constant.
 
 ### 8. Tests (`tests/`)
-- [ ] `.gitignore` generated on first project write; not clobbered when present;
+- [x] `.gitignore` generated on first project write; not clobbered when present;
       not created in user dir.
-- [ ] Scope routing: memory add default→user file, explicit project→project file;
+- [x] Scope routing: memory add default→user file, explicit project→project file;
       search merges and labels both; limit respected post-merge.
-- [ ] Notepad fall-through: get without scope finds project note when no user note.
-- [ ] `ANCHOR_USER_DIR` override respected.
-- [ ] User dir not created until first user-scope write (no `~/.anchor` litter
+- [x] Notepad fall-through: get without scope finds project note when no user note.
+- [x] `ANCHOR_USER_DIR` override respected.
+- [x] User dir not created until first user-scope write (no `~/.anchor` litter
       from read-only sessions).
-- [ ] Existing 25 tests stay green unmodified (backward compat: a pre-v0.2
+- [x] Existing 25 tests stay green unmodified (backward compat: a pre-v0.2
       project `.anchor/` keeps working with zero migration).
 
 ### 9. README
-- [ ] Rewrite "State directory" section: two-scope table + both trees.
-- [ ] Replace "Plans, notepads, rules, and memory are designed to be committed"
+- [x] Rewrite "State directory" section: two-scope table + both trees.
+- [x] Replace "Plans, notepads, rules, and memory are designed to be committed"
       with: plans + rules committed; memory + notepads default to user scope,
       opt into project scope per write.
-- [ ] New short "Privacy" section: what lands where, the generated `.gitignore`,
+- [x] New short "Privacy" section: what lands where, the generated `.gitignore`,
       one paragraph of incident response (a pushed secret is compromised the
       moment it lands — rotate first; force-push + GitHub Support GC is cleanup,
       not an undo).
-- [ ] Mention `ANCHOR_USER_DIR`, and that `~/.anchor` can be a private git repo.
+- [x] Mention `ANCHOR_USER_DIR`, and that `~/.anchor` can be a private git repo.
 
 ### 10. Deployment (makes "in daily use" true)
-- [ ] Project-scope `.mcp.json` in this repo: done 2026-08-12. Global rollout
+- [x] Project-scope `.mcp.json` in this repo: done 2026-08-12. Global rollout
       deliberately deferred until the graceful-startup fix (item 1) lands —
       a global anchor currently crash-loops in every non-git session.
 - [ ] Then add anchor to `~/.claude.json` (global mcpServers), `~/.codex/config.toml`,
