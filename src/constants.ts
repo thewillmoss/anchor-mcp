@@ -12,6 +12,9 @@ export const PLANS_DIR = "plans"
 export const NOTEPADS_DIR = "notepads"
 export const SCHEMA_VERSION = 1
 
+// ── Project scope root override ───────────────────────────────────
+export const ANCHOR_STATE_DIR_ENV = "ANCHOR_STATE_DIR"
+
 // ── User scope (~/.anchor, overridable via ANCHOR_USER_DIR) ──────
 export const ANCHOR_USER_DIR_ENV = "ANCHOR_USER_DIR"
 
