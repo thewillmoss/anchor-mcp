@@ -17,7 +17,7 @@ import { registerPromoteTool } from "./tools/promote.js";
 
 const server = new McpServer({
   name: "anchor-mcp",
-  version: "0.1.0",
+  version: "0.2.0",
 });
 
 // Project scope requires a git worktree. Outside one, don't crash the whole

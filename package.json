@@ -1,6 +1,6 @@
 {
   "name": "@thewillmoss/anchor-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Portable agent working state MCP server \u2014 tasks, plans, notepads, memory, and rules for any AI coding agent",
   "license": "MIT",
   "repository": {
