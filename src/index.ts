@@ -33,7 +33,7 @@ try {
 }
 
 const projectStore = new AnchorStore(rootDir, { unavailableReason: worktreeError });
-const userStore = new AnchorStore("", { anchorDir: resolveUserAnchorDir() });
+const userStore = new AnchorStore("", { anchorDir: resolveUserAnchorDir(), privateMode: true });
 
 registerTaskTools(server, projectStore);
 registerPlanTools(server, projectStore);

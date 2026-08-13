@@ -13,6 +13,7 @@ import {
   mkdirSync,
   appendFileSync,
   readdirSync,
+  lstatSync,
 } from "node:fs"
 import { join } from "node:path"
 import {
@@ -36,9 +37,6 @@ function generateId(): string {
   return `task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
 
-/** Matches a single filename-safe path segment: no separators, no leading dot. */
-const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
-
 export interface AnchorStoreOptions {
   /**
    * Absolute path to the anchor directory itself, bypassing the default
@@ -58,6 +56,12 @@ export interface AnchorStoreOptions {
    * into some unrelated cwd.
    */
   unavailableReason?: string
+  /**
+   * When true, the anchor directory is created 0o700 and files 0o600
+   * instead of default umask perms. Set for the user store — the README
+   * tells people to keep personal data there.
+   */
+  privateMode?: boolean
 }
 
 export class AnchorStore {
@@ -70,10 +74,12 @@ export class AnchorStore {
   private readonly gitignorePath: string
   private readonly generatesGitignore: boolean
   private readonly unavailableReason?: string
+  private readonly privateMode: boolean
 
   constructor(rootDir: string, options: AnchorStoreOptions = {}) {
     this.unavailableReason = options.unavailableReason
     this.generatesGitignore = options.anchorDir === undefined
+    this.privateMode = options.privateMode ?? false
     this.anchorDir = options.anchorDir ?? join(rootDir, ANCHOR_DIR)
     this.statePath = join(this.anchorDir, STATE_FILE)
     this.memoryPath = join(this.anchorDir, MEMORY_FILE)
@@ -102,28 +108,68 @@ export class AnchorStore {
   }
 
   /**
-   * Reject anything but a plain filename-safe identifier. `topic`, plan
-   * `name`, and plan `section` are user/LLM-controlled and get joined
-   * straight into filesystem paths — without this, "../../etc" style
-   * values could escape the anchor directory entirely.
+   * Reject anything that could escape the anchor directory or isn't a
+   * sane filename. `topic`, plan `name`, plan `section`, and `planName`
+   * are user/LLM-controlled and get joined straight into filesystem
+   * paths. This is a denylist, not an allowlist: v0.1 data may have
+   * spaces or unicode in these fields (both legal, both fine on disk),
+   * so only traversal-shaped or otherwise unsafe values are rejected.
    */
   private validateIdentifier(value: string, paramName: string): void {
-    if (!SAFE_IDENTIFIER.test(value) || value.includes("..")) {
-      throw new Error(
-        `anchor-mcp: invalid ${paramName} '${value}' — must contain only letters, numbers, ` +
-        `'.', '_', '-', start with a letter or number, and not contain '..'`
-      )
+    let reason: string | null = null
+    if (value.length === 0) {
+      reason = "must not be empty"
+    } else if (value.includes("/") || value.includes("\\")) {
+      reason = "must not contain '/' or '\\'"
+    } else if (value.includes("..")) {
+      reason = "must not contain '..'"
+    } else if (value.startsWith(".")) {
+      reason = "must not start with '.'"
+    } else {
+      for (let i = 0; i < value.length; i++) {
+        if (value.charCodeAt(i) < 0x20) {
+          reason = "must not contain control characters"
+          break
+        }
+      }
+    }
+    if (reason) {
+      throw new Error(`anchor-mcp: invalid ${paramName} '${value}' — ${reason}`)
+    }
+  }
+
+  /**
+   * Refuse to read or write through a symlink. A committed .anchor/ is
+   * attacker-controlled the moment it's someone else's repo — a notepad,
+   * memory.jsonl, rules.md, or plan file committed as a symlink to an
+   * arbitrary host path would otherwise expose that path on read, or
+   * corrupt it on append/write. lstat (not stat) so the check sees the
+   * link itself rather than resolving through it.
+   */
+  private assertNotSymlink(path: string): void {
+    let stat
+    try {
+      stat = lstatSync(path)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return
+      throw error
+    }
+    if (stat.isSymbolicLink()) {
+      throw new Error(`anchor-mcp: refusing to follow symlink at '${path}'`)
     }
   }
 
   // ── Directory management ──────────────────────────────────────
 
   private ensureAnchorDir(): void {
-    mkdirSync(this.anchorDir, { recursive: true })
+    const dirOptions = this.privateMode
+      ? { recursive: true as const, mode: 0o700 }
+      : { recursive: true as const }
+    mkdirSync(this.anchorDir, dirOptions)
     // Idempotent even against a partial/committed .anchor/ (e.g. a fresh
     // clone that has .gitignore + memory.jsonl but no notepads/ yet).
-    mkdirSync(this.plansDir, { recursive: true })
-    mkdirSync(this.notepadsDir, { recursive: true })
+    mkdirSync(this.plansDir, dirOptions)
+    mkdirSync(this.notepadsDir, dirOptions)
     // Project scope only, create-if-absent, never clobber a file the user
     // may have extended (e.g. to also ignore memory.jsonl). "wx" is
     // atomically create-exclusive — safe even against a dangling symlink.
@@ -139,7 +185,7 @@ export class AnchorStore {
   /** Write-to-temp (unique per process+call) + rename, for crash-safe writes to `targetPath`. */
   private writeFileAtomic(targetPath: string, content: string): void {
     const tmpPath = `${targetPath}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`
-    writeFileSync(tmpPath, content, "utf-8")
+    writeFileSync(tmpPath, content, this.privateMode ? { encoding: "utf-8", mode: 0o600 } : "utf-8")
     renameSync(tmpPath, targetPath)
   }
 
@@ -147,6 +193,7 @@ export class AnchorStore {
 
   readState(): AnchorState {
     this.assertAvailable()
+    this.assertNotSymlink(this.statePath)
     if (!existsSync(this.statePath)) {
       return this.defaultState()
     }
@@ -154,14 +201,28 @@ export class AnchorStore {
       const raw = readFileSync(this.statePath, "utf-8")
       return JSON.parse(raw) as AnchorState
     } catch {
-      // Corrupt state — return default so tools still work
-      console.error("anchor-mcp: corrupt state.json, resetting to default")
+      // Corrupt state — preserve the original (best-effort) before
+      // resetting to default, so a bad write never silently destroys it.
+      const corruptPath = `${this.statePath}.corrupt`
+      let preserved = false
+      try {
+        renameSync(this.statePath, corruptPath)
+        preserved = true
+      } catch {
+        // best-effort — fall through to default state either way
+      }
+      console.error(
+        preserved
+          ? `anchor-mcp: corrupt state.json, preserved as ${corruptPath} and reset to default`
+          : "anchor-mcp: corrupt state.json, resetting to default (could not preserve original)"
+      )
       return this.defaultState()
     }
   }
 
   writeState(state: AnchorState): void {
     this.assertAvailable()
+    this.assertNotSymlink(this.statePath)
     this.ensureAnchorDir()
     state.version = SCHEMA_VERSION
     state.updatedAt = nowIso()
@@ -229,18 +290,24 @@ export class AnchorStore {
 
   addMemory(content: string, tags: string[] = []): MemoryEntry {
     this.assertAvailable()
+    this.assertNotSymlink(this.memoryPath)
     this.ensureAnchorDir()
     const entry: MemoryEntry = {
       content,
       tags,
       timestamp: nowIso(),
     }
-    appendFileSync(this.memoryPath, JSON.stringify(entry) + "\n", "utf-8")
+    appendFileSync(
+      this.memoryPath,
+      JSON.stringify(entry) + "\n",
+      this.privateMode ? { encoding: "utf-8", mode: 0o600 } : "utf-8"
+    )
     return entry
   }
 
   readMemory(): MemoryEntry[] {
     this.assertAvailable()
+    this.assertNotSymlink(this.memoryPath)
     if (!existsSync(this.memoryPath)) return []
     const raw = readFileSync(this.memoryPath, "utf-8")
     const entries: MemoryEntry[] = []
@@ -289,6 +356,7 @@ export class AnchorStore {
     this.assertAvailable()
     this.validateIdentifier(name, "name")
     const planPath = join(this.plansDir, name, "plan.md")
+    this.assertNotSymlink(planPath)
     if (!existsSync(planPath)) return null
     return readFileSync(planPath, "utf-8")
   }
@@ -298,6 +366,7 @@ export class AnchorStore {
     this.validateIdentifier(name, "name")
     this.validateIdentifier(section, "section")
     const sectionPath = join(this.plansDir, name, `${section}.md`)
+    this.assertNotSymlink(sectionPath)
     if (!existsSync(sectionPath)) return null
     return readFileSync(sectionPath, "utf-8")
   }
@@ -309,7 +378,9 @@ export class AnchorStore {
     this.ensureAnchorDir()
     const planDir = join(this.plansDir, name)
     mkdirSync(planDir, { recursive: true })
-    this.writeFileAtomic(join(planDir, `${section}.md`), content)
+    const sectionPath = join(planDir, `${section}.md`)
+    this.assertNotSymlink(sectionPath)
+    this.writeFileAtomic(sectionPath, content)
   }
 
   listPlans(): string[] {
@@ -326,6 +397,7 @@ export class AnchorStore {
     this.assertAvailable()
     this.validateIdentifier(topic, "topic")
     const path = join(this.notepadsDir, `${topic}.md`)
+    this.assertNotSymlink(path)
     if (!existsSync(path)) return null
     return readFileSync(path, "utf-8")
   }
@@ -333,8 +405,10 @@ export class AnchorStore {
   saveNotepad(topic: string, content: string): void {
     this.assertAvailable()
     this.validateIdentifier(topic, "topic")
+    const path = join(this.notepadsDir, `${topic}.md`)
+    this.assertNotSymlink(path)
     this.ensureAnchorDir()
-    this.writeFileAtomic(join(this.notepadsDir, `${topic}.md`), content)
+    this.writeFileAtomic(path, content)
   }
 
   listNotepads(): string[] {
@@ -349,12 +423,14 @@ export class AnchorStore {
 
   getRules(): string {
     this.assertAvailable()
+    this.assertNotSymlink(this.rulesPath)
     if (!existsSync(this.rulesPath)) return ""
     return readFileSync(this.rulesPath, "utf-8")
   }
 
   saveRules(content: string): void {
     this.assertAvailable()
+    this.assertNotSymlink(this.rulesPath)
     this.ensureAnchorDir()
     this.writeFileAtomic(this.rulesPath, content)
   }
@@ -365,6 +441,7 @@ export class AnchorStore {
     this.assertAvailable()
     this.validateIdentifier(planName, "planName")
     const learningsPath = join(this.plansDir, planName, "learnings.md")
+    this.assertNotSymlink(learningsPath)
     if (!existsSync(learningsPath)) return null
     const learnings = readFileSync(learningsPath, "utf-8")
     const rules = this.getRules()
